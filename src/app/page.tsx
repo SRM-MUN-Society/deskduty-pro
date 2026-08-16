@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
-const CORRECT_PASSWORD = "internalaffairs@abhiraj";
+const CORRECT_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "internalaffairs@abhiraj";
 
 const DAY_ORDERS = ["DO1", "DO2", "DO3", "DO4", "DO5"] as const;
 type DayOrder = (typeof DAY_ORDERS)[number];
