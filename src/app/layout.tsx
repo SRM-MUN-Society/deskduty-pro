@@ -5,6 +5,15 @@ export const metadata: Metadata = {
   title: "DeskDuty Pro",
   description:
     "Smart desk duty roster generator for SRM MUN Society — allocate heads and members across hourly slots with fairness-based scheduling.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
