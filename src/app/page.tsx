@@ -21,11 +21,11 @@ const HOUR_SLOTS = [
   { hour: 2, label: "Hour 2 (8:50-9:40)",   time: "8:50-9:40" },
   { hour: 3, label: "Hour 3 (9:45-10:35)",  time: "9:45-10:35" },
   { hour: 4, label: "Hour 4 (10:40-11:30)", time: "10:40-11:30" },
-  { hour: 5, label: "Hour 5 (11:30-12:20)", time: "11:30-12:20" },
-  { hour: 6, label: "Hour 6 (12:25-1:15)",  time: "12:25-1:15" },
+  { hour: 5, label: "Hour 5 (11:35-12:25)", time: "11:35-12:25" },
+  { hour: 6, label: "Hour 6 (12:30-1:20)",  time: "12:30-1:20" },
   { hour: 7, label: "Hour 7 (1:25-2:15)",   time: "1:25-2:15" },
-  { hour: 8, label: "Hour 8 (2:20-3:10)",   time: "2:20-3:10" },
-  { hour: 9, label: "Hour 9 (3:10-4:00)",   time: "3:10-4:00" },
+  { hour: 8, label: "Hour 8 (2:15-3:10)",   time: "2:15-3:10" },
+  { hour: 9, label: "Hour 9 (3:15-4:00)",   time: "3:15-4:00" },
   { hour: 10, label: "Hour 10 (4:00-4:50)", time: "4:00-4:50" },
 ] as const;
 
@@ -100,12 +100,40 @@ function isAvailableForSlot(
 ): boolean {
   if (!availabilityStr || availabilityStr.trim() === "") return false;
 
-  // Extract all "Hour N" numbers from the availability string
+  // 1. Extract all "Hour N" numbers from the availability string
   const hourRegex = /Hour\s+(\d+)/gi;
   let match;
+  let foundHourMatch = false;
   while ((match = hourRegex.exec(availabilityStr)) !== null) {
+    foundHourMatch = true;
     if (parseInt(match[1], 10) === hourNumber) return true;
   }
+  if (foundHourMatch) return false;
+
+  // 2. Otherwise, check for time strings.
+  // The heads form uses variations like "11:35 am to 12:25 pm" vs "11:30-12:20"
+  // We can just use the start hour:minute to identify the slot.
+  const hourSignatures: Record<number, string[]> = {
+    1: ["8:00"],
+    2: ["8:50"],
+    3: ["9:45"],
+    4: ["10:40"],
+    5: ["11:30", "11:35"],
+    6: ["12:25", "12:30"],
+    7: ["1:25"],
+    8: ["2:15", "2:20"],
+    9: ["3:10", "3:15"],
+    10: ["4:00"]
+  };
+  
+  const signatures = hourSignatures[hourNumber] || [];
+  const parts = availabilityStr.split(",").map((s) => s.trim());
+  for (const part of parts) {
+    for (const sig of signatures) {
+      if (part.startsWith(sig)) return true;
+    }
+  }
+
   return false;
 }
 
@@ -120,12 +148,14 @@ function isAvailableForSlot(
 function resolveDayColumn(keys: string[], dayOrder: DayOrder): string | null {
   const dayNum = dayOrder.replace("DO", "");
 
-  // 1. Match "Day order N free slots" (the Google Form format)
+  // 1. Match "Day order N free slots" or "Free hours on DON" (the Google Form formats)
   for (const k of keys) {
     const lower = k.toLowerCase().trim();
     if (
       lower === `day order ${dayNum} free slots` ||
-      lower.startsWith(`day order ${dayNum}`)
+      lower.startsWith(`day order ${dayNum}`) ||
+      lower.includes(`free hours on do${dayNum}`) ||
+      lower.includes(`free hours on ${dayOrder.toLowerCase()}`)
     ) {
       return k;
     }
@@ -147,6 +177,13 @@ function resolveDayColumn(keys: string[], dayOrder: DayOrder): string | null {
   for (const k of keys) {
     const lower = k.toLowerCase();
     if (lower.includes("day") && lower.includes(dayNum)) {
+      return k;
+    }
+  }
+
+  // 4. Fuzzy fallback: column containing dayOrder directly
+  for (const k of keys) {
+    if (k.toLowerCase().includes(dayOrder.toLowerCase())) {
       return k;
     }
   }
@@ -200,34 +237,66 @@ function generateRoster(
 
   // Initialize tallies
   headsData.forEach((h) => {
-    if (h.Name) headTally[h.Name.trim()] = 0;
+    if (h.Name || h["Full name"]) {
+      const name = (h.Name || h["Full name"]).trim();
+      headTally[name] = 0;
+    }
   });
   membersData.forEach((m) => {
     if (m.Name) memberTally[m.Name.trim()] = 0;
   });
+
+  // Calculate max duties for heads based on free hours (free/2 rounded)
+  const headMaxDuty: Record<string, number> = {};
+  if (headDayCol) {
+    for (const h of headsData) {
+      const name = (h.Name || h["Full name"] || "").trim();
+      if (!name) continue;
+      let freeCount = 0;
+      for (let i = 0; i < slots.length; i++) {
+        if (isAvailableForSlot(h[headDayCol], slots[i].hour)) {
+          freeCount++;
+        }
+      }
+      headMaxDuty[name] = Math.max(1, Math.round(freeCount / 2));
+    }
+  }
 
   // ── HEADS ALLOCATION ──────────────────────────────────────────────────────
   const headsLines: string[] = [`UB DESK DUTY (HEADS) - ${dayOrder}`, ""];
 
   for (let i = 0; i < slots.length; i++) {
     const { hour, label } = slots[i];
-    const target = randBetween(3, 5);
+    // Target at least 4 heads per hour
+    const target = randBetween(4, 5);
 
     // Find available heads
     let available: { name: string }[] = [];
+    let fallback: { name: string }[] = [];
     if (headDayCol) {
       for (const h of headsData) {
-        const name = (h.Name ?? "").trim();
+        const name = (h.Name || h["Full name"] || "").trim();
         if (!name) continue;
         if (isAvailableForSlot(h[headDayCol], hour)) {
-          available.push({ name });
+          // Check if they are under their maximum duty cap
+          if ((headTally[name] || 0) < (headMaxDuty[name] || 99)) {
+            available.push({ name });
+          } else {
+            fallback.push({ name });
+          }
         }
       }
     }
 
     // Fairness sort & pick
     available = fairnessSort(available, headTally);
-    const picked = available.slice(0, target);
+    let picked = available.slice(0, target);
+    
+    // Fill from fallback if needed to reach target
+    if (picked.length < target && fallback.length > 0) {
+      fallback = fairnessSort(fallback, headTally);
+      picked.push(...fallback.slice(0, target - picked.length));
+    }
 
     headsLines.push(`${label}`);
     if (picked.length === 0) {
