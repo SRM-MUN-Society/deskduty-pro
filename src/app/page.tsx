@@ -191,6 +191,19 @@ function resolveDayColumn(keys: string[], dayOrder: DayOrder): string | null {
   return null;
 }
 
+/** Normalize domain strings from Google Forms to internal keys */
+function normalizeDomain(raw: string): string {
+  const d = raw.toLowerCase().trim();
+  if (d.includes("operation")) return "operations";
+  if (d.includes("delegate affair") || d === "da") return "da";
+  if (d.includes("public relation") || d === "pr") return "pr";
+  if (d.includes("hospitality")) return "hospitality";
+  if (d.includes("brm")) return "brm";
+  if (d.includes("decor")) return "decor";
+  if (d.includes("design")) return "design";
+  return "";
+}
+
 /**
  * Sort by duty tally ascending, shuffle ties.
  */
@@ -243,7 +256,10 @@ function generateRoster(
     }
   });
   membersData.forEach((m) => {
-    if (m.Name) memberTally[m.Name.trim()] = 0;
+    if (m.Name || m["Full name"]) {
+      const name = (m.Name || m["Full name"]).trim();
+      memberTally[name] = 0;
+    }
   });
 
   // Calculate max duties for heads based on free hours (free/2 rounded)
@@ -315,9 +331,9 @@ function generateRoster(
 
   for (let i = 0; i < slots.length; i++) {
     const { hour, label } = slots[i];
-    const totalTarget = randBetween(8, 9);
-    const DA_QUOTA = 3;
-    const OPS_QUOTA = 3;
+    const totalTarget = 6;
+    const DA_QUOTA = 1;
+    const OPS_QUOTA = 1;
 
     // Build availability pools by domain
     const domainPools: Record<string, { name: string; domain: string }[]> = {};
@@ -325,12 +341,12 @@ function generateRoster(
 
     if (memberDayCol) {
       for (const m of membersData) {
-        const name = (m.Name ?? "").trim();
-        const domain = (m.Domain ?? "").trim().toLowerCase();
+        const name = (m.Name || m["Full name"] || "").trim();
+        const domain = (m.Domain || "").trim();
         if (!name) continue;
         if (isAvailableForSlot(m[memberDayCol], hour)) {
-          const resolved = DOMAINS_LOWER.includes(domain) ? domain : "";
-          if (resolved) {
+          const resolved = normalizeDomain(domain);
+          if (resolved && domainPools[resolved]) {
             domainPools[resolved].push({ name, domain: resolved });
           }
         }
