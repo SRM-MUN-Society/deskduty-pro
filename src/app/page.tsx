@@ -331,9 +331,9 @@ function generateRoster(
 
   for (let i = 0; i < slots.length; i++) {
     const { hour, label } = slots[i];
-    const totalTarget = 10;
-    const DA_QUOTA = 3;
-    const OPS_QUOTA = 3;
+    const MAX_DA = 3;
+    const MAX_OPS = 3;
+    const MIN_PER_DOMAIN = 1;
 
     // Build availability pools by domain
     const domainPools: Record<string, { name: string; domain: string }[]> = {};
@@ -360,6 +360,8 @@ function generateRoster(
 
     const picked: { name: string; domain: string }[] = [];
     const pickedNames = new Set<string>();
+    const domainCounts: Record<string, number> = {};
+    for (const d of DOMAINS_LOWER) domainCounts[d] = 0;
 
     // Helper: pick N from a domain pool
     const pickFrom = (
@@ -377,37 +379,60 @@ function generateRoster(
       return result;
     };
 
-    // 1. Try to pick 3 from DA
-    const daMembers = pickFrom("da", DA_QUOTA);
-    picked.push(...daMembers);
-    const daPicked = daMembers.length;
+    // Step 1: Try to pick at least 1 from each domain
+    for (const domain of DOMAINS_LOWER) {
+      const members = pickFrom(domain, MIN_PER_DOMAIN);
+      picked.push(...members);
+      domainCounts[domain] = members.length;
+    }
 
-    // 2. Try to pick 3 from Operations
-    const opsMembers = pickFrom("operations", OPS_QUOTA);
-    picked.push(...opsMembers);
-    const opsPicked = opsMembers.length;
+    // Step 2: Fill up to MAX for DA (3 total including the 1 already picked)
+    if (domainCounts["da"] < MAX_DA) {
+      const additionalDA = pickFrom("da", MAX_DA - domainCounts["da"]);
+      picked.push(...additionalDA);
+      domainCounts["da"] += additionalDA.length;
+    }
 
-    // 3. Calculate deficit and compensate from other domains
-    const deficit = (DA_QUOTA - daPicked) + (OPS_QUOTA - opsPicked);
-    const remaining = totalTarget - picked.length;
+    // Step 3: Fill up to MAX for Operations (3 total including the 1 already picked)
+    if (domainCounts["operations"] < MAX_OPS) {
+      const additionalOps = pickFrom("operations", MAX_OPS - domainCounts["operations"]);
+      picked.push(...additionalOps);
+      domainCounts["operations"] += additionalOps.length;
+    }
 
-    // Build wildcard pool: everyone NOT already picked, from any domain
-    let wildcardPool: { name: string; domain: string }[] = [];
-    for (const d of DOMAINS_LOWER) {
-      for (const p of domainPools[d]) {
-        if (!pickedNames.has(p.name)) {
-          wildcardPool.push(p);
-        }
+    // Step 4: Check if any domain couldn't provide their minimum
+    const domainsWithDeficit: string[] = [];
+    for (const domain of DOMAINS_LOWER) {
+      if (domain !== "da" && domain !== "operations" && domainCounts[domain] === 0) {
+        domainsWithDeficit.push(domain);
       }
     }
-    wildcardPool = fairnessSort(wildcardPool, memberTally);
 
-    // Fill remaining slots
-    for (const p of wildcardPool) {
-      if (picked.length >= totalTarget) break;
-      if (!pickedNames.has(p.name)) {
-        picked.push(p);
-        pickedNames.add(p.name);
+    // Step 5: If there are domains with deficit, compensate from DA and Operations
+    if (domainsWithDeficit.length > 0) {
+      // Build compensation pool from DA and Operations that haven't been picked
+      let compensationPool: { name: string; domain: string }[] = [];
+      for (const p of domainPools["da"]) {
+        if (!pickedNames.has(p.name)) {
+          compensationPool.push(p);
+        }
+      }
+      for (const p of domainPools["operations"]) {
+        if (!pickedNames.has(p.name)) {
+          compensationPool.push(p);
+        }
+      }
+      compensationPool = fairnessSort(compensationPool, memberTally);
+
+      // Fill the deficit
+      for (const p of compensationPool) {
+        if (domainsWithDeficit.length === 0) break;
+        if (!pickedNames.has(p.name)) {
+          picked.push(p);
+          pickedNames.add(p.name);
+          domainCounts[p.domain]++;
+          domainsWithDeficit.pop(); // One less slot to fill
+        }
       }
     }
 
