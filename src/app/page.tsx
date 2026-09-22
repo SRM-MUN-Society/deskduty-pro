@@ -331,9 +331,9 @@ function generateRoster(
 
   for (let i = 0; i < slots.length; i++) {
     const { hour, label } = slots[i];
-    const totalTarget = 6;
-    const DA_QUOTA = 1;
-    const OPS_QUOTA = 1;
+    const totalTarget = 10;
+    const DA_QUOTA = 3;
+    const OPS_QUOTA = 3;
 
     // Build availability pools by domain
     const domainPools: Record<string, { name: string; domain: string }[]> = {};
@@ -377,15 +377,20 @@ function generateRoster(
       return result;
     };
 
-    // 1. Mandatory DA
+    // 1. Try to pick 3 from DA
     const daMembers = pickFrom("da", DA_QUOTA);
     picked.push(...daMembers);
+    const daPicked = daMembers.length;
 
-    // 2. Mandatory Operations
+    // 2. Try to pick 3 from Operations
     const opsMembers = pickFrom("operations", OPS_QUOTA);
     picked.push(...opsMembers);
+    const opsPicked = opsMembers.length;
 
-    // 3. Calculate remaining spots — fill up to totalTarget
+    // 3. Calculate deficit and compensate from other domains
+    const deficit = (DA_QUOTA - daPicked) + (OPS_QUOTA - opsPicked);
+    const remaining = totalTarget - picked.length;
+
     // Build wildcard pool: everyone NOT already picked, from any domain
     let wildcardPool: { name: string; domain: string }[] = [];
     for (const d of DOMAINS_LOWER) {
@@ -397,6 +402,7 @@ function generateRoster(
     }
     wildcardPool = fairnessSort(wildcardPool, memberTally);
 
+    // Fill remaining slots
     for (const p of wildcardPool) {
       if (picked.length >= totalTarget) break;
       if (!pickedNames.has(p.name)) {
@@ -690,7 +696,17 @@ function FileUploadZone({
 
 // ─── Output Panel ───────────────────────────────────────────────────────────────
 
-function OutputPanel({ label, value }: { label: string; value: string }) {
+function OutputPanel({ 
+  label, 
+  value, 
+  onShuffle, 
+  canShuffle 
+}: { 
+  label: string; 
+  value: string; 
+  onShuffle?: () => void;
+  canShuffle?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -716,13 +732,32 @@ function OutputPanel({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
         <span className="label-text">{label}</span>
-        <button
-          onClick={handleCopy}
-          disabled={!value}
-          className={`btn-copy ${copied ? "copied" : ""}`}
-        >
-          {copied ? "✓ Copied" : "Copy Text"}
-        </button>
+        <div className="flex gap-2">
+          {onShuffle && (
+            <button
+              onClick={onShuffle}
+              disabled={!canShuffle}
+              className="btn-secondary text-xs py-2 px-4 flex items-center gap-2"
+              title="Shuffle members roster"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 3 21 3 21 8"></polyline>
+                <line x1="4" y1="20" x2="21" y2="3"></line>
+                <polyline points="21 16 21 21 16 21"></polyline>
+                <line x1="15" y1="15" x2="21" y2="21"></line>
+                <line x1="4" y1="4" x2="9" y2="9"></line>
+              </svg>
+              Shuffle
+            </button>
+          )}
+          <button
+            onClick={handleCopy}
+            disabled={!value}
+            className={`btn-copy ${copied ? "copied" : ""}`}
+          >
+            {copied ? "✓ Copied" : "Copy Text"}
+          </button>
+        </div>
       </div>
       <textarea
         readOnly
@@ -820,7 +855,24 @@ function Dashboard() {
     }, 300);
   };
 
+  const handleShuffleMembers = () => {
+    if (!membersData) return;
+    setGenerating(true);
+    // Slight delay to show loading state
+    setTimeout(() => {
+      const result = generateRoster(
+        headsData ?? [],
+        membersData,
+        dayOrder
+      );
+      // Only update members output, keep heads as is
+      setMembersOutput(result.membersOutput);
+      setGenerating(false);
+    }, 300);
+  };
+
   const canGenerate = headsData || membersData;
+  const canShuffleMembers = Boolean(membersData && membersOutput);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -931,7 +983,12 @@ function Dashboard() {
             )}
             {membersData && (
               <div className="glass-card p-6">
-                <OutputPanel label="Members Output" value={membersOutput} />
+                <OutputPanel 
+                  label="Members Output" 
+                  value={membersOutput}
+                  onShuffle={handleShuffleMembers}
+                  canShuffle={canShuffleMembers}
+                />
               </div>
             )}
           </div>
